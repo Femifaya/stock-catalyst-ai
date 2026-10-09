@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+next-env.d.ts.bak
+
+# production
+dist/
+coverage/
+
+# database (never commit local data)
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+!data/.gitkeep
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# logs & os
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# misc
+*.tsbuildinfo
+.vercel
+.idea/
+.vscode/
