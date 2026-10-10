@@ -19,7 +19,6 @@ function buildCsp(): string {
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
-    "frame-ancestors 'none'",
     "form-action 'self'",
     "img-src 'self' data: blob:",
     "media-src 'self'",
@@ -38,10 +37,12 @@ function buildCsp(): string {
   );
 
   if (!isProduction) {
-    // `upgrade-insecure-requests` breaks local http:// development.
+    // Local previews may be embedded by the desktop app; production remains
+    // protected by frame-ancestors 'none'. HTTPS upgrades also break local HTTP.
     return directives.filter((directive) => directive !== 'upgrade-insecure-requests').join('; ');
   }
 
+  directives.push("frame-ancestors 'none'");
   return directives.join('; ');
 }
 

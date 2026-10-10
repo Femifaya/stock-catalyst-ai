@@ -107,7 +107,8 @@ export class DemoProvider implements MarketDataProvider {
   }
 
   async getQuote(symbol: string, _ctx: ProviderContext): Promise<ProviderResult<Quote>> {
-    const candles = demoCandles(symbol, 30);
+    // Quote and history use the same deterministic path so the latest close agrees.
+    const candles = demoCandles(symbol, 400);
     const last = candles[candles.length - 1];
     const previous = candles[candles.length - 2] ?? last;
     const change = round2(last.close - previous.close);
