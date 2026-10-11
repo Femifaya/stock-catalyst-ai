@@ -1,12 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { SavedReport } from '@/lib/reports/store.ts';
 import { ReportView } from '@/components/report-view.tsx';
 import type { MarketSnapshot } from '@/lib/market/types.ts';
 import type { IndicatorSnapshot } from '@/lib/indicators/types.ts';
+import { SiteHeader } from '@/components/site-header.tsx';
 import {
   addWatchlistSymbol,
   DEFAULT_WATCHLIST,
@@ -117,7 +117,7 @@ export default function Home() {
 
   return <main className="shell">
     <a className="skip" href="#main">Skip to content</a>
-    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CATALYST <small>RESEARCH DESK</small></span></Link><nav><Link className="active" href="/">Workspace</Link><Link href="/reports">Reports</Link><Link href="/settings">Settings</Link></nav><span className="research-only">RESEARCH ONLY</span></header>
+    <SiteHeader activeSection="workspace" />
     <div className="layout">
       <aside className="sidebar" aria-label="Research watchlist">
         <div className="side-title"><span>WATCHLIST</span><span className="watchlist-count">{watchlist.length}/{MAX_WATCHLIST_SYMBOLS}</span></div>
