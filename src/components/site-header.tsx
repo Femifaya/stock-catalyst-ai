@@ -2,16 +2,18 @@
 
 import Link from 'next/link';
 import React, { useEffect, useRef, useState } from 'react';
+import { useDemoProfile } from '@/components/demo-profile-provider.tsx';
 
-export type SiteSection = 'workspace' | 'reports' | 'settings';
+export type SiteSection = 'workspace' | 'reports' | 'settings' | 'profile' | 'login' | 'signup';
 
-const navigationItems: ReadonlyArray<{ label: string; href: string; section: SiteSection }> = [
+const baseNavigationItems: ReadonlyArray<{ label: string; href: string; section: SiteSection }> = [
   { label: 'Workspace', href: '/', section: 'workspace' },
   { label: 'Reports', href: '/reports', section: 'reports' },
   { label: 'Settings', href: '/settings', section: 'settings' },
 ];
 
 export function SiteHeader({ activeSection }: { activeSection: SiteSection }) {
+  const { ready, profile, signedIn, signOut } = useDemoProfile();
   const [isOpen, setIsOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -78,6 +80,9 @@ export function SiteHeader({ activeSection }: { activeSection: SiteSection }) {
     <Link className="brand" href="/" onClick={closeDrawer}>
       <span className="brand-mark">C</span><span>CATALYST <small>RESEARCH DESK</small></span>
     </Link>
+    {ready && (signedIn && profile
+      ? <div className="header-profile"><span>{profile.displayName}</span><Link href="/profile">Profile</Link><button type="button" onClick={signOut}>Sign out</button></div>
+      : <div className="header-profile"><Link href="/login">Login</Link><Link href="/signup">Create demo profile</Link></div>)}
     <span className="research-only">RESEARCH ONLY</span>
     {isOpen && <div className="nav-drawer-layer">
       <button className="nav-overlay" type="button" aria-label="Close navigation drawer" tabIndex={-1} onClick={closeDrawer}/>
@@ -87,13 +92,16 @@ export function SiteHeader({ activeSection }: { activeSection: SiteSection }) {
           <button ref={closeButtonRef} className="nav-close" type="button" aria-label="Close navigation menu" onClick={closeDrawer}>×</button>
         </div>
         <nav aria-label="Main navigation">
-          {navigationItems.map((item) => <Link
+          {baseNavigationItems.map((item) => <Link
             key={item.section}
             className={`nav-drawer-link ${activeSection === item.section ? 'active' : ''}`}
             href={item.href}
             aria-current={activeSection === item.section ? 'page' : undefined}
             onClick={closeDrawer}
           >{item.label}</Link>)}
+          {ready && (signedIn && profile
+            ? <><Link className="nav-drawer-link" href="/profile" aria-current={activeSection === 'profile' ? 'page' : undefined} onClick={closeDrawer}>Profile</Link><button className="nav-drawer-link nav-drawer-action" type="button" onClick={() => { signOut(); closeDrawer(); }}>Sign out</button></>
+            : <><Link className="nav-drawer-link" href="/login" aria-current={activeSection === 'login' ? 'page' : undefined} onClick={closeDrawer}>Login</Link><Link className="nav-drawer-link" href="/signup" aria-current={activeSection === 'signup' ? 'page' : undefined} onClick={closeDrawer}>Create demo profile</Link></>)}
         </nav>
       </aside>
     </div>}

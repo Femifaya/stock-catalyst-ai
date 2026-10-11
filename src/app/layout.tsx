@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { DemoProfileProvider } from '@/components/demo-profile-provider.tsx';
 
 export const metadata: Metadata = {
   title: 'Catalyst | Stock research desk',
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+  return <html lang="en"><body><DemoProfileProvider>{children}</DemoProfileProvider></body></html>;
 }

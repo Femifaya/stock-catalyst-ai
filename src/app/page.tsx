@@ -7,6 +7,8 @@ import { ReportView } from '@/components/report-view.tsx';
 import type { MarketSnapshot } from '@/lib/market/types.ts';
 import type { IndicatorSnapshot } from '@/lib/indicators/types.ts';
 import { SiteHeader } from '@/components/site-header.tsx';
+import { useDemoProfile } from '@/components/demo-profile-provider.tsx';
+import { applyPreferenceDefault } from '@/lib/demo-profile.ts';
 import {
   addWatchlistSymbol,
   DEFAULT_WATCHLIST,
@@ -26,10 +28,13 @@ const money = (value: number | null | undefined) => value == null ? 'n/a' : new 
 const label = (status?: string) => (status ?? 'unavailable').toUpperCase();
 
 export default function Home() {
+  const { ready: profileReady, profile } = useDemoProfile();
   const [symbol, setSymbol] = useState('NVDA');
   const [question, setQuestion] = useState('What evidence and risks should I review before considering this stock over the selected swing-trading horizon?');
   const [horizon, setHorizon] = useState('3_to_12_weeks');
   const [riskTolerance, setRiskTolerance] = useState('medium');
+  const [riskChanged, setRiskChanged] = useState(false);
+  const [horizonChanged, setHorizonChanged] = useState(false);
   const [entryPrice, setEntryPrice] = useState('');
   const [watchlist, setWatchlist] = useState<string[]>([...DEFAULT_WATCHLIST]);
   const [watchlistReady, setWatchlistReady] = useState(false);
@@ -67,6 +72,12 @@ export default function Home() {
   }
 
   useEffect(() => { void load('NVDA'); }, []);
+
+  useEffect(() => {
+    if (!profileReady || !profile) return;
+    setRiskTolerance((current) => applyPreferenceDefault(current, profile.defaultRiskTolerance, riskChanged));
+    setHorizon((current) => applyPreferenceDefault(current, profile.defaultResearchHorizon, horizonChanged));
+  }, [profileReady, profile, riskChanged, horizonChanged]);
 
   useEffect(() => {
     try {
@@ -149,7 +160,7 @@ export default function Home() {
           <div className="columns"><section className="panel chart-panel"><div className="panel-title"><div><p className="eyebrow">PRICE HISTORY</p><h3>Daily close</h3></div><span className="status">{label(snapshot.candles.provenance?.status)}</span></div>{chartPoints.length > 1 ? <><svg className="chart" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label={`${snapshot.symbol} daily closing prices over ${chartPoints.length} sessions`}><polyline points={points} fill="none" stroke="#71e0b4" strokeWidth=".7" vectorEffect="non-scaling-stroke"/></svg><div className="chart-foot"><span>As of {snapshot.candles.provenance?.asOf ?? 'unknown'}</span><span>Close {money(last ?? null)} · {snapshot.candles.data?.adjustment ?? 'adjustment unknown'}</span></div></> : <Unavailable name="Historical candles" code={snapshot.candles.error?.code}/>}</section>
             <section className="panel"><div className="panel-title"><div><p className="eyebrow">LOCAL CALCULATIONS</p><h3>Technical context</h3></div><span className="type-tag">CALCULATION</span></div><div className="indicator-row"><span>Trend</span><strong>{snapshot.indicators?.trend?.direction ?? 'unavailable'}</strong></div><div className="indicator-row"><span>Trend strength</span><strong>{snapshot.indicators?.trend ? `${(snapshot.indicators.trend.strength * 100).toFixed(0)}%` : 'unavailable'}</strong></div><div className="indicator-row"><span>RSI (14)</span><strong>{snapshot.indicators?.rsi14?.latest == null ? 'unavailable' : snapshot.indicators.rsi14.latest.toFixed(1)}</strong></div>{snapshot.indicators?.warnings.map((warning) => <p className="warning" key={warning}>{warning}</p>)}</section></div>
           <div className="columns lower"><section className="panel"><div className="panel-title"><div><p className="eyebrow">UPCOMING & RECENT</p><h3>Earnings</h3></div><span className="type-tag">{label(snapshot.quote.provenance?.status)}</span></div>{snapshot.earnings.data?.length ? snapshot.earnings.data.slice(0, 3).map((event, index) => <div className="list-row" key={`${event.date}-${index}`}><span>{new Date(event.date).toLocaleDateString()}</span><strong>{event.status}</strong></div>) : <Unavailable name="Earnings calendar" code={snapshot.earnings.error?.code}/>}</section><section className="panel"><div className="panel-title"><div><p className="eyebrow">CATALYST FEED</p><h3>Recent news</h3></div><span className="type-tag">SOURCE LINKED</span></div>{snapshot.news.data?.length ? snapshot.news.data.slice(0, 4).map((item, index) => item.url ? <a className="news-row" key={`${item.url}-${index}`} href={item.url} target="_blank" rel="noreferrer"><strong>{item.headline}</strong><small>{item.source} · {new Date(item.publishedAt).toLocaleDateString()}</small></a> : <div className="news-row" key={`${item.headline}-${index}`}><strong>{item.headline}</strong><small>{item.source} · {new Date(item.publishedAt).toLocaleDateString()}</small></div>) : <Unavailable name="News" code={snapshot.news.error?.code}/>}</section></div>
-          <section className="panel research-form-panel"><p className="eyebrow">RESEARCH QUESTION</p><h3>Generate a structured evidence report</h3><form onSubmit={research} className="research-form"><label>Risk level<select value={riskTolerance} onChange={(event) => setRiskTolerance(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Time horizon<select value={horizon} onChange={(event) => setHorizon(event.target.value)}>{horizonOptions.map(([value, labelText]) => <option value={value} key={value}>{labelText}</option>)}</select></label><label>Optional entry price (USD)<input type="number" min="0.01" step="0.01" value={entryPrice} onChange={(event) => setEntryPrice(event.target.value)} placeholder="Not supplied"/></label><label className="question-field">Research question<textarea value={question} onChange={(event) => setQuestion(event.target.value)} minLength={10} maxLength={600} required rows={3}/></label><button disabled={busy}>{busy ? 'Researching…' : 'Generate research report'}</button></form><p className="muted">Qwen reports require a server-side key. In Demo Mode the report is a deterministic rule-based template, clearly labelled as not AI output.</p></section>
+          <section className="panel research-form-panel"><p className="eyebrow">RESEARCH QUESTION</p><h3>Generate a structured evidence report</h3><form onSubmit={research} className="research-form"><label>Risk level<select value={riskTolerance} onChange={(event) => { setRiskChanged(true); setRiskTolerance(event.target.value); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Time horizon<select value={horizon} onChange={(event) => { setHorizonChanged(true); setHorizon(event.target.value); }}>{horizonOptions.map(([value, labelText]) => <option value={value} key={value}>{labelText}</option>)}</select></label><label>Optional entry price (USD)<input type="number" min="0.01" step="0.01" value={entryPrice} onChange={(event) => setEntryPrice(event.target.value)} placeholder="Not supplied"/></label><label className="question-field">Research question<textarea value={question} onChange={(event) => setQuestion(event.target.value)} minLength={10} maxLength={600} required rows={3}/></label><button disabled={busy}>{busy ? 'Researching…' : 'Generate research report'}</button></form><p className="muted">Qwen reports require a server-side key. In Demo Mode the report is a deterministic rule-based template, clearly labelled as not AI output.</p></section>
           {savedReport && <ReportView initialReport={savedReport}/>}
           <p className="disclaimer">Research only. Data may be live, delayed, cached, synthetic, or unavailable; status and provenance are shown per evidence item. Human decision required.</p>
         </>}

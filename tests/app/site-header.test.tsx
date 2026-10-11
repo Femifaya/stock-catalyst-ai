@@ -5,6 +5,7 @@ import type { Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { SiteHeader } from '../../src/components/site-header.tsx';
+import { DemoProfileProvider } from '../../src/components/demo-profile-provider.tsx';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, onClick, ...props }: { href: string; children: ReactNode } & AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props} onClick={(event) => { event.preventDefault(); onClick?.(event); }}>{children}</a>,
@@ -22,13 +23,14 @@ afterEach(async () => {
     activeRoot = undefined;
   }
   document.body.innerHTML = '';
+  window.localStorage.clear();
 });
 
 async function renderHeader(activeSection: 'workspace' | 'reports' | 'settings'): Promise<HTMLElement> {
   const container = document.createElement('div');
   document.body.append(container);
   activeRoot = createRoot(container);
-  await act(async () => activeRoot?.render(createElement(SiteHeader, { activeSection })));
+  await act(async () => activeRoot?.render(createElement(DemoProfileProvider, null, createElement(SiteHeader, { activeSection }))));
   return container;
 }
 
@@ -67,10 +69,12 @@ describe('SiteHeader navigation drawer', () => {
     expect(menuButton.getAttribute('aria-expanded')).toBe('true');
     expect(buttonByLabel(container, 'Close navigation menu')).toBe(document.activeElement);
     const links = drawer?.querySelectorAll('a[href]');
-    expect(links).toHaveLength(3);
+    expect(links).toHaveLength(5);
     expect(linkByText(container, 'Workspace').getAttribute('href')).toBe('/');
     expect(linkByText(container, 'Reports').getAttribute('aria-current')).toBe('page');
     expect(linkByText(container, 'Settings').getAttribute('href')).toBe('/settings');
+    expect(linkByText(container, 'Login').getAttribute('href')).toBe('/login');
+    expect(linkByText(container, 'Create demo profile').getAttribute('href')).toBe('/signup');
   });
 
   it('closes with the close button and returns focus to the menu button', async () => {
@@ -108,7 +112,7 @@ describe('SiteHeader navigation drawer', () => {
     const closeButton = buttonByLabel(container, 'Close navigation menu');
 
     await keydown('Tab', { shiftKey: true });
-    expect(linkByText(container, 'Settings')).toBe(document.activeElement);
+    expect(container.querySelector('.nav-drawer a[href="/signup"]')).toBe(document.activeElement);
     await keydown('Tab');
     expect(closeButton).toBe(document.activeElement);
 
