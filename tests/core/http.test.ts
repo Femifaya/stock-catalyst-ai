@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  ALLOWED_AI_HOSTS,
   classifyHttpFailure,
   httpRequest,
   isAllowedHost,
@@ -30,6 +31,17 @@ describe('host allowlist', () => {
     assert.equal(isAllowedHost('file:///etc/passwd'), false);
     assert.equal(isAllowedHost('http://169.254.169.254/latest/meta-data/'), false);
     assert.equal(isAllowedHost('not a url'), false);
+  });
+
+  it('allows only HTTPS URLs on the exact approved Qwen host and existing DashScope hosts', () => {
+    assert.equal(isAllowedHost('https://hackathon.bitgetops.com/v1', ALLOWED_AI_HOSTS), true);
+    assert.equal(isAllowedHost('https://dashscope.aliyuncs.com/compatible-mode/v1', ALLOWED_AI_HOSTS), true);
+    assert.equal(isAllowedHost('https://dashscope-intl.aliyuncs.com/compatible-mode/v1', ALLOWED_AI_HOSTS), true);
+    assert.equal(isAllowedHost('https://hackathon.bitgetops.com.evil.com/v1', ALLOWED_AI_HOSTS), false);
+    assert.equal(isAllowedHost('https://hackathon.bitgetops.com@evil.com/v1', ALLOWED_AI_HOSTS), false);
+    assert.equal(isAllowedHost('https://user:password@hackathon.bitgetops.com/v1', ALLOWED_AI_HOSTS), false);
+    assert.equal(isAllowedHost('https://*.hackathon.bitgetops.com/v1', ALLOWED_AI_HOSTS), false);
+    assert.equal(isAllowedHost('http://hackathon.bitgetops.com/v1', ALLOWED_AI_HOSTS), false);
   });
 
   it('honours an explicit allowlist override', () => {

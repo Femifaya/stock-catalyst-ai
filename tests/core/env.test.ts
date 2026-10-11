@@ -79,6 +79,22 @@ describe('loadConfig', () => {
     assert.match(bad.warnings.join(' '), /not a valid http\(s\) URL/);
   });
 
+  it('preserves the configured BitgetOps Qwen URL and rejects insecure or deceptive hosts', () => {
+    const configuredUrl = 'https://hackathon.bitgetops.com/v1';
+    assert.equal(loadConfig({ QWEN_BASE_URL: configuredUrl }).qwen.baseUrl, configuredUrl);
+
+    for (const invalidUrl of [
+      'http://hackathon.bitgetops.com/v1',
+      'https://user:password@hackathon.bitgetops.com/v1',
+      'https://*.bitgetops.com/v1',
+      'https://hackathon.bitgetops.com.evil.com/v1',
+    ]) {
+      const config = loadConfig({ QWEN_BASE_URL: invalidUrl });
+      assert.equal(config.qwen.baseUrl, 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1');
+      assert.match(config.warnings.join(' '), /not a valid http\(s\) URL/);
+    }
+  });
+
   it('marks the AI layer configured only when a key is present', () => {
     assert.equal(loadConfig({ QWEN_API_KEY: '   ' }).qwen.isConfigured, false);
     assert.equal(loadConfig({ QWEN_API_KEY: 'sk-test' }).qwen.isConfigured, true);

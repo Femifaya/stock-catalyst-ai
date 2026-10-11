@@ -1,3 +1,5 @@
+import { ALLOWED_AI_HOSTS, isAllowedHost } from '../market/http.ts';
+
 /**
  * The ONLY module that reads process.env for secrets.
  *
@@ -152,7 +154,8 @@ function readProviderOrder(env: Environment, ctx: ParseContext): ProviderId[] {
 function isSafeHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:';
+    return url.protocol === 'https:' && url.username === '' && url.password === ''
+      && !url.hostname.includes('*') && isAllowedHost(value, ALLOWED_AI_HOSTS);
   } catch {
     return false;
   }

@@ -21,6 +21,7 @@ export const ALLOWED_PROVIDER_HOSTS: readonly string[] = [
 export const ALLOWED_AI_HOSTS: readonly string[] = [
   'dashscope-intl.aliyuncs.com',
   'dashscope.aliyuncs.com',
+  'hackathon.bitgetops.com',
 ];
 
 export interface HttpResponse {
@@ -51,8 +52,9 @@ export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 export function isAllowedHost(url: string, allowedHosts: readonly string[] = ALLOWED_PROVIDER_HOSTS): boolean {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return false;
     const host = parsed.hostname.toLowerCase();
+    if (host.includes('*')) return false;
     return allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
   } catch {
     return false;
