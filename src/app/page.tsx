@@ -7,8 +7,15 @@ import type { SavedReport } from '@/lib/reports/store.ts';
 import { ReportView } from '@/components/report-view.tsx';
 import type { MarketSnapshot } from '@/lib/market/types.ts';
 import type { IndicatorSnapshot } from '@/lib/indicators/types.ts';
+import {
+  addWatchlistSymbol,
+  DEFAULT_WATCHLIST,
+  MAX_WATCHLIST_SYMBOLS,
+  parseSavedWatchlist,
+  removeWatchlistSymbol,
+  WATCHLIST_STORAGE_KEY,
+} from '@/lib/market/watchlist.ts';
 
-const watchlist = ['NVDA', 'MSFT', 'AAPL', 'AMZN', 'TSLA'];
 const horizonOptions = [
   ['days_to_2_weeks', 'Days to 2 weeks'], ['2_to_8_weeks', '2 to 8 weeks'], ['3_to_12_weeks', '3 to 12 weeks'], ['6_to_18_months', '6 to 18 months'],
 ] as const;
@@ -24,6 +31,10 @@ export default function Home() {
   const [horizon, setHorizon] = useState('3_to_12_weeks');
   const [riskTolerance, setRiskTolerance] = useState('medium');
   const [entryPrice, setEntryPrice] = useState('');
+  const [watchlist, setWatchlist] = useState<string[]>([...DEFAULT_WATCHLIST]);
+  const [watchlistReady, setWatchlistReady] = useState(false);
+  const [newWatchSymbol, setNewWatchSymbol] = useState('');
+  const [watchlistMessage, setWatchlistMessage] = useState('');
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [savedReport, setSavedReport] = useState<SavedReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,6 +68,45 @@ export default function Home() {
 
   useEffect(() => { void load('NVDA'); }, []);
 
+  useEffect(() => {
+    try {
+      setWatchlist(parseSavedWatchlist(window.localStorage.getItem(WATCHLIST_STORAGE_KEY)));
+    } catch {
+      setWatchlist([...DEFAULT_WATCHLIST]);
+    }
+    setWatchlistReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!watchlistReady) return;
+    try {
+      window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
+    } catch {
+      setWatchlistMessage('Browser storage is unavailable; watchlist changes will not survive a refresh.');
+    }
+  }, [watchlist, watchlistReady]);
+
+  function addToWatchlist(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const result = addWatchlistSymbol(watchlist, newWatchSymbol);
+    if (!result.ok) {
+      setWatchlistMessage(result.reason === 'invalid'
+        ? 'Enter a valid US ticker symbol.'
+        : result.reason === 'duplicate'
+          ? 'That symbol is already in the watchlist.'
+          : `The watchlist is limited to ${MAX_WATCHLIST_SYMBOLS} symbols.`);
+      return;
+    }
+    setWatchlist(result.symbols);
+    setNewWatchSymbol('');
+    setWatchlistMessage(`${result.symbols[result.symbols.length - 1]} added. Select it to load its data.`);
+  }
+
+  function removeFromWatchlist(removedSymbol: string) {
+    setWatchlist((current) => removeWatchlistSymbol(current, removedSymbol));
+    setWatchlistMessage(`${removedSymbol} removed from the watchlist.`);
+  }
+
   const quote = snapshot?.quote.data;
   const series = snapshot?.candles.data?.candles ?? [];
   const last = series.at(-1)?.close;
@@ -69,7 +119,25 @@ export default function Home() {
     <a className="skip" href="#main">Skip to content</a>
     <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CATALYST <small>RESEARCH DESK</small></span></Link><nav><Link className="active" href="/">Workspace</Link><Link href="/reports">Reports</Link><Link href="/settings">Settings</Link></nav><span className="research-only">RESEARCH ONLY</span></header>
     <div className="layout">
-      <aside className="sidebar"><div className="side-title">WATCHLIST</div><p className="muted">US EQUITIES</p>{watchlist.map((item) => <button className={`watch-row ${symbol === item ? 'selected' : ''}`} key={item} onClick={() => void load(item)} disabled={busy}><span>{item}</span><span className="watch-status">{snapshot?.symbol === item ? label(snapshot.quote.provenance?.status ?? (snapshot.quote.error ? 'unavailable' : undefined)) : 'SELECT'}</span></button>)}<div className="side-note"><span className="dot"/> Human decision required<br/><small>No trading or brokerage connections.</small></div></aside>
+      <aside className="sidebar" aria-label="Research watchlist">
+        <div className="side-title"><span>WATCHLIST</span><span className="watchlist-count">{watchlist.length}/{MAX_WATCHLIST_SYMBOLS}</span></div>
+        <p className="muted">US EQUITIES</p>
+        <form className="watchlist-add" onSubmit={addToWatchlist}>
+          <label htmlFor="watchlist-symbol">Add symbol</label>
+          <div><input id="watchlist-symbol" value={newWatchSymbol} onChange={(event) => setNewWatchSymbol(event.target.value.toUpperCase())} maxLength={10} placeholder="e.g. GOOGL"/><button type="submit" disabled={watchlist.length >= MAX_WATCHLIST_SYMBOLS}>Add</button></div>
+        </form>
+        {watchlistMessage && <p className="watchlist-message" role="status" aria-live="polite">{watchlistMessage}</p>}
+        <div className="watchlist-items">
+          {watchlist.map((item) => <div className={`watch-row ${symbol === item ? 'selected' : ''}`} key={item}>
+            <button className="watch-select" type="button" onClick={() => void load(item)} disabled={busy} aria-current={symbol === item ? 'true' : undefined}>
+              <span>{item}</span><span className="watch-status">{snapshot?.symbol === item ? label(snapshot.quote.provenance?.status ?? (snapshot.quote.error ? 'unavailable' : undefined)) : 'SELECT'}</span>
+            </button>
+            <button className="watch-remove" type="button" onClick={() => removeFromWatchlist(item)} aria-label={`Remove ${item} from watchlist`} title={`Remove ${item}`}>×</button>
+          </div>)}
+          {watchlist.length === 0 && <p className="watchlist-empty">No symbols saved. Add one above.</p>}
+        </div>
+        <div className="side-note"><span className="dot"/> Human decision required<br/><small>No trading or brokerage connections.</small></div>
+      </aside>
       <section id="main" className="content">
         <div className="page-heading"><div><p className="eyebrow">AI TRADING DESK / INFORMATION EXTRACTION & SIGNAL GENERATION</p><h1>Research workspace</h1><p className="muted">Evidence, provenance, and local calculations for US swing research.</p></div><form onSubmit={(event) => { event.preventDefault(); void load(symbol); }} className="search"><label htmlFor="symbol">SYMBOL</label><input id="symbol" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} maxLength={10} placeholder="NVDA"/><button disabled={busy}>Load data</button></form></div>
         {error && <div className="error" role="alert">{error}</div>}
