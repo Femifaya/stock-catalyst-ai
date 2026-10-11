@@ -3,16 +3,16 @@
  *
  * - Reads the API key from validated config; the key is never logged, never
  *   returned to a caller, and never included in an error message.
- * - Uses the OpenAI-compatible chat-completions endpoint with JSON output.
+ * - Uses the Qwen Responses API with concise JSON output.
  * - Bounded timeout, bounded retries with exponential backoff, and a closed set of
  *   error codes so the pipeline can render an explicit failure state.
  * - Response text is parsed defensively; a truncated or fenced payload is handled,
  *   and anything unparseable becomes `invalid_payload` rather than a crash.
  */
 
-import { httpRequest, isAllowedHost, ALLOWED_AI_HOSTS } from '../market/http.ts';
+import { httpRequest, isAllowedHost, ALLOWED_AI_HOSTS, safeJsonParse } from '../market/http.ts';
 import type { FetchLike } from '../market/http.ts';
-import { Logger } from '../utils/logger.ts';
+import { Logger, redactSecrets } from '../utils/logger.ts';
 import { isRecord } from '../market/validators.ts';
 
 export type QwenErrorCode =
@@ -74,7 +74,9 @@ export interface QwenFailure {
 
 export type QwenResult = QwenSuccess | QwenFailure;
 
-const RETRYABLE: QwenErrorCode[] = ['timeout', 'rate_limited', 'upstream_error', 'network'];
+const RETRYABLE: QwenErrorCode[] = ['rate_limited', 'upstream_error', 'network'];
+const QWEN_MODEL = 'qwen3.8-max';
+const MAX_OUTPUT_TOKENS = 1_500;
 
 export function backoffDelayMs(attempt: number, random: () => number = Math.random): number {
   const base = 500 * 2 ** Math.max(0, attempt - 1);
@@ -121,19 +123,20 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
     return mapFailure('not_configured', 'QWEN_API_KEY is not configured, so AI research is unavailable. Data and indicators are still shown.', 0, 0, null);
   }
 
-  const endpoint = `${options.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const endpoint = `${options.baseUrl.replace(/\/+$/, '')}/responses`;
   if (!isAllowedHost(endpoint, ALLOWED_AI_HOSTS)) {
     logger.warn('refusing to call a host outside the AI allowlist', { host: safeHost(endpoint) });
     return mapFailure('blocked_host', 'the configured Qwen base URL host is not in the allowlist', 0, 0, null);
   }
 
+  const instructions = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n');
+  const input = messages.filter((message) => message.role !== 'system').map(({ role, content }) => ({ role, content }));
   const body = JSON.stringify({
-    model: options.model,
-    messages,
+    model: QWEN_MODEL,
+    ...(instructions.length > 0 ? { instructions } : {}),
+    input,
     temperature: options.temperature,
-    max_tokens: options.maxTokens,
-    response_format: { type: 'json_object' },
-    stream: false,
+    max_output_tokens: MAX_OUTPUT_TOKENS,
   });
 
   const maxAttempts = Math.max(1, options.maxRetries + 1);
@@ -160,6 +163,16 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
 
     const latencyMs = (options.now ? options.now() : Date.now()) - started;
 
+    if (!response.ok && response.status > 0) {
+      logger.warn('Qwen provider returned a non-2xx response', {
+        durationMs: response.elapsedMs,
+        status: response.status,
+        responseBody: sanitizeResponseBody(response.text),
+      });
+    } else if (response.failure === 'timeout') {
+      logger.warn('Qwen provider request timed out', { durationMs: response.elapsedMs, status: null });
+    }
+
     if (response.failure === 'timeout') {
       lastFailure = mapFailure('timeout', `the model did not respond within ${options.timeoutMs}ms`, latencyMs, attempt, null);
     } else if (response.failure === 'blocked_host') {
@@ -174,6 +187,9 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
       lastFailure = mapFailure('upstream_error', `the model provider returned HTTP ${response.status}`, latencyMs, attempt, response.retryAfterSeconds);
     } else {
       const parsed = response.json ?? extractJsonObject(response.text ?? '');
+      if (!isCompletedResponse(parsed)) {
+        return mapFailure('invalid_payload', 'the model response was incomplete or malformed', latencyMs, attempt, null);
+      }
       const content = readContent(parsed);
       if (content === null) {
         return mapFailure('invalid_payload', 'the model response did not contain a usable completion', latencyMs, attempt, null);
@@ -188,7 +204,7 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
         usage: readUsage(parsed),
         latencyMs,
         attempts: attempt,
-        model: options.model,
+        model: QWEN_MODEL,
       };
     }
 
@@ -205,24 +221,23 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
 
 function readContent(payload: unknown): string | null {
   if (!isRecord(payload)) return null;
-  const choices = payload.choices;
-  if (Array.isArray(choices) && choices.length > 0) {
-    const first = choices[0];
-    if (isRecord(first)) {
-      const message = first.message;
-      if (isRecord(message) && typeof message.content === 'string') return message.content;
-      if (typeof first.text === 'string') return first.text;
+  if (!Array.isArray(payload.output)) return null;
+  const text: string[] = [];
+  for (const item of payload.output) {
+    if (!isRecord(item) || item.type !== 'message' || item.role !== 'assistant' || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (isRecord(part) && part.type === 'output_text' && typeof part.text === 'string') text.push(part.text);
     }
   }
-  if (typeof payload.output === 'string') return payload.output;
-  if (isRecord(payload.output) && typeof payload.output.text === 'string') return payload.output.text;
-  return null;
+  return text.length > 0 ? text.join('') : null;
 }
 
 function readFinishReason(payload: unknown): string | null {
-  if (!isRecord(payload) || !Array.isArray(payload.choices) || payload.choices.length === 0) return null;
-  const first = payload.choices[0];
-  return isRecord(first) && typeof first.finish_reason === 'string' ? first.finish_reason : null;
+  return isRecord(payload) && typeof payload.status === 'string' ? payload.status : null;
+}
+
+function isCompletedResponse(payload: unknown): boolean {
+  return isRecord(payload) && payload.status === 'completed';
 }
 
 function readUsage(payload: unknown): QwenUsage | null {
@@ -248,4 +263,12 @@ function safeHost(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+function sanitizeResponseBody(body: string | null): unknown {
+  if (body === null) return null;
+  const parsed = safeJsonParse(body);
+  const sanitized = redactSecrets(parsed ?? body);
+  const serialized = JSON.stringify(sanitized);
+  return serialized.length <= 4_000 ? sanitized : `${serialized.slice(0, 4_000)}…`;
 }

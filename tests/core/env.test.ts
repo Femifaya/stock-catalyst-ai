@@ -11,7 +11,7 @@ describe('loadConfig', () => {
     assert.equal(config.database.path, './data/stock-catalyst.sqlite');
     assert.equal(config.database.autoMigrate, true);
     assert.equal(config.qwen.isConfigured, false);
-    assert.equal(config.qwen.model, 'qwen-plus');
+    assert.equal(config.qwen.model, 'qwen3.8-max');
     assert.equal(config.qwen.timeoutMs, 45_000);
     assert.equal(config.qwen.maxRetries, 2);
     assert.equal(config.qwen.strictValidation, true);
@@ -57,6 +57,13 @@ describe('loadConfig', () => {
     assert.equal(config.cache.ttlQuoteSeconds, 60);
     assert.equal(config.rateLimit.maxRequests, 60);
     assert.equal(config.warnings.length, 5);
+  });
+
+  it('accepts a configurable Qwen timeout up to 240000ms and rejects values above it', () => {
+    assert.equal(loadConfig({ QWEN_TIMEOUT_MS: '240000' }).qwen.timeoutMs, 240_000);
+    const overLimit = loadConfig({ QWEN_TIMEOUT_MS: '240001' });
+    assert.equal(overLimit.qwen.timeoutMs, 45_000);
+    assert.match(overLimit.warnings.join(' '), /QWEN_TIMEOUT_MS/);
   });
 
   it('parses booleans from the common spellings and warns otherwise', () => {

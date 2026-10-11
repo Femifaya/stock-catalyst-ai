@@ -187,10 +187,10 @@ export function loadConfig(env: Environment = process.env): AppConfig {
     qwen: {
       apiKey: qwenApiKey,
       baseUrl: qwenBaseUrl,
-      model: readString(env, 'QWEN_MODEL') ?? 'qwen-plus',
-      timeoutMs: readInt(env, 'QWEN_TIMEOUT_MS', 45_000, 1_000, 300_000, ctx),
+      model: 'qwen3.8-max',
+      timeoutMs: readInt(env, 'QWEN_TIMEOUT_MS', 45_000, 1_000, 240_000, ctx),
       maxRetries: readInt(env, 'QWEN_MAX_RETRIES', 2, 0, 5, ctx),
-      maxTokens: readInt(env, 'QWEN_MAX_TOKENS', 3_000, 256, 16_000, ctx),
+      maxTokens: 1_500,
       temperature: readFloat(env, 'QWEN_TEMPERATURE', 0.2, 0, 1, ctx),
       strictValidation: readBool(env, 'QWEN_STRICT_VALIDATION', true, ctx),
       isConfigured: qwenApiKey !== null,
