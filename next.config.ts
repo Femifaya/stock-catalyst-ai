@@ -10,8 +10,8 @@ const isProduction = process.env.NODE_ENV === 'production';
  *   third-party origins. This is a deliberate defence-in-depth choice: even if a client
  *   component were compromised it could not exfiltrate data to a provider endpoint.
  * - `style-src 'unsafe-inline'` is required because React writes inline `style` attributes
- *   and Next.js injects critical CSS. `script-src` stays free of `unsafe-inline` in
- *   production; `unsafe-eval` is only enabled for the dev HMR runtime.
+ *   and Next.js injects critical CSS. Production allows inline scripts for Next.js page
+ *   hydration; `unsafe-eval` is only enabled for the dev HMR runtime.
  * - `frame-ancestors 'none'` blocks clickjacking.
  */
 function buildCsp(): string {
@@ -32,7 +32,7 @@ function buildCsp(): string {
 
   directives.push(
     isProduction
-      ? "script-src 'self'"
+      ? "script-src 'self' 'unsafe-inline'"
       : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   );
 
