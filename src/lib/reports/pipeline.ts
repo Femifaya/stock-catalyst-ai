@@ -137,7 +137,7 @@ export async function runResearch(request: ResearchRequest): Promise<ResearchRun
       parsed = extractJsonObject(completion.content);
       validation = validateAiReport(parsed, validationContext);
     }
-    if (!validation.ok) return { ok: false, code: 'ai_invalid_response', message: `The model response failed strict report validation: ${describeIssues(validation.issues)}` };
+    if (!validation.ok) return { ok: false, code: 'ai_schema_validation_failed', message: `The Qwen report did not match the required report format (${describeIssues(validation.issues)}).` };
     generated = validation.value;
     generationMode = 'qwen';
   }

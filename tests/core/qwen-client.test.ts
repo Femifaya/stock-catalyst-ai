@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { requestJsonCompletion } from '../../src/lib/ai/qwen-client.ts';
+import { extractJsonObject, requestJsonCompletion } from '../../src/lib/ai/qwen-client.ts';
 import type { FetchLike } from '../../src/lib/market/http.ts';
 import { isRecord } from '../../src/lib/market/validators.ts';
 import { Logger } from '../../src/lib/utils/logger.ts';
@@ -66,7 +66,8 @@ describe('Qwen Responses API client', () => {
     const payload: unknown = JSON.parse(requestBody);
     assert.ok(isRecord(payload));
     assert.equal(payload.model, 'qwen3.8-max');
-    assert.equal(payload.max_output_tokens, 1_500);
+    assert.equal(payload.max_output_tokens, 3_000);
+    assert.deepEqual(payload.reasoning, { effort: 'low' });
     assert.ok(Array.isArray(payload.input));
     assert.equal(payload.instructions, undefined);
     assert.equal(payload.messages, undefined);
@@ -74,7 +75,7 @@ describe('Qwen Responses API client', () => {
     assert.ok(requestBody.length < 2_000, `request payload unexpectedly large (${requestBody.length} characters)`);
   });
 
-  it('takes assistant output_text from message items and ignores reasoning items', async () => {
+  it('combines all Responses output_text blocks and ignores reasoning items', async () => {
     const fetchImpl: FetchLike = async () => new Response(JSON.stringify({
       status: 'completed',
       output: [
@@ -93,26 +94,34 @@ describe('Qwen Responses API client', () => {
     if (result.ok) assert.equal(result.content, '{"first":true}');
   });
 
-  it('rejects incomplete Responses API output', async () => {
+  it('reports output token exhaustion distinctly and logs only safe response diagnostics', async () => {
+    const logger = new CapturingLogger();
     const fetchImpl: FetchLike = async () => new Response(JSON.stringify({
       status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
       output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '{"partial":' }] }],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
 
-    const result = await requestJsonCompletion([{ role: 'user', content: 'test' }], options(fetchImpl));
+    const result = await requestJsonCompletion([{ role: 'user', content: 'test' }], options(fetchImpl, { logger }));
 
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.code, 'invalid_payload');
+    if (!result.ok) assert.equal(result.code, 'token_limit_reached');
+    assert.equal(logger.warnings.length, 1);
+    const meta = logger.warnings[0]?.meta;
+    assert.ok(meta);
+    assert.equal(meta.status, 200);
+    assert.equal(meta.incompleteReason, 'max_output_tokens');
+    assert.deepEqual(meta.outputItemTypes, ['message']);
+    assert.deepEqual(meta.contentTypes, ['output_text']);
+    assert.equal(meta.outputTextLength, '{"partial":'.length);
   });
 
-  it('records sanitized duration, status, and non-2xx body without secrets or authorization', async () => {
+  it('logs only response status and permitted output diagnostics for non-2xx responses', async () => {
     const logger = new CapturingLogger();
     const fetchImpl: FetchLike = async () => new Response(JSON.stringify({
-      error: {
-        message: 'upstream request rejected',
-        api_key: 'sk-provider-echoed-secret-value-123456',
-        authorization: 'Bearer provider-echoed-auth-secret',
-      },
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'sensitive response content' }] }],
     }), { status: 503, headers: { 'content-type': 'application/json' } });
 
     const result = await requestJsonCompletion([{ role: 'user', content: 'A test request.' }], options(fetchImpl, { logger, maxRetries: 0 }));
@@ -124,13 +133,33 @@ describe('Qwen Responses API client', () => {
     assert.equal(entry.message, 'Qwen provider returned a non-2xx response');
     assert.ok(entry.meta);
     assert.equal(entry.meta.status, 503);
-    assert.equal(typeof entry.meta.durationMs, 'number');
     const serialized = JSON.stringify(entry.meta);
-    assert.match(serialized, /upstream request rejected/);
-    assert.doesNotMatch(serialized, /sk-provider-echoed-secret-value-123456/);
-    assert.doesNotMatch(serialized, /provider-echoed-auth-secret/);
-    assert.doesNotMatch(serialized, /Bearer/);
+    assert.deepEqual(Object.keys(entry.meta).sort(), ['contentTypes', 'incompleteReason', 'outputItemTypes', 'outputTextLength', 'status'].sort());
+    assert.equal(entry.meta.incompleteReason, 'max_output_tokens');
+    assert.equal(entry.meta.outputTextLength, 'sensitive response content'.length);
+    assert.doesNotMatch(serialized, /sensitive response content/);
     assert.doesNotMatch(serialized, /sk-test-key-that-must-never-be-logged-123456/);
+  });
+
+  it('accepts optional fenced JSON output before strict downstream schema validation', async () => {
+    const fetchImpl: FetchLike = async () => new Response(responsesPayload('```json\n{"ok":true}\n```'), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+    const result = await requestJsonCompletion([{ role: 'user', content: 'test' }], options(fetchImpl));
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(extractJsonObject(result.content), { ok: true });
+  });
+
+  it('distinguishes completed output with no text from malformed JSON text', async () => {
+    const noText: FetchLike = async () => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [] }] }), { status: 200 });
+    const malformed: FetchLike = async () => new Response(responsesPayload('{"truncated":'), { status: 200 });
+    const missing = await requestJsonCompletion([{ role: 'user', content: 'test' }], options(noText));
+    const invalid = await requestJsonCompletion([{ role: 'user', content: 'test' }], options(malformed));
+    assert.equal(missing.ok, false);
+    if (!missing.ok) assert.equal(missing.code, 'missing_output_text');
+    assert.equal(invalid.ok, false);
+    if (!invalid.ok) assert.equal(invalid.code, 'invalid_json');
   });
 
   it('does not retry a timed-out request and start another long attempt', async () => {

@@ -246,6 +246,10 @@ function researchErrorMessage(status: number, value: unknown): string {
   const record = typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
   const code = record && 'code' in record && typeof record.code === 'string' ? record.code : '';
   const message = record && 'message' in record && typeof record.message === 'string' ? record.message : 'The research request could not be completed.';
+  if (code === 'token_limit_reached') return `Token limit reached: ${message}`;
+  if (code === 'missing_output_text') return `Missing output text: ${message}`;
+  if (code === 'invalid_json') return `Invalid JSON: ${message}`;
+  if (code === 'ai_schema_validation_failed') return `Schema validation failed: ${message}`;
   if (status === 429 || code === 'ai_rate_limited' || code === 'rate_limited') return `Rate limit: ${message}`;
   if (code === 'ai_not_configured' || code === 'not_configured') return `Configuration: ${message}`;
   if (code === 'timeout' || code === 'ai_timeout') return `Timeout: ${message}`;

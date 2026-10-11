@@ -10,9 +10,9 @@
  *   and anything unparseable becomes `invalid_payload` rather than a crash.
  */
 
-import { httpRequest, isAllowedHost, ALLOWED_AI_HOSTS, safeJsonParse } from '../market/http.ts';
+import { httpRequest, isAllowedHost, ALLOWED_AI_HOSTS } from '../market/http.ts';
 import type { FetchLike } from '../market/http.ts';
-import { Logger, redactSecrets } from '../utils/logger.ts';
+import { Logger } from '../utils/logger.ts';
 import { isRecord } from '../market/validators.ts';
 
 export type QwenErrorCode =
@@ -24,6 +24,9 @@ export type QwenErrorCode =
   | 'upstream_error'
   | 'empty_response'
   | 'invalid_payload'
+  | 'token_limit_reached'
+  | 'missing_output_text'
+  | 'invalid_json'
   | 'blocked_host';
 
 export interface QwenMessage {
@@ -76,7 +79,7 @@ export type QwenResult = QwenSuccess | QwenFailure;
 
 const RETRYABLE: QwenErrorCode[] = ['rate_limited', 'upstream_error', 'network'];
 const QWEN_MODEL = 'qwen3.8-max';
-const MAX_OUTPUT_TOKENS = 1_500;
+const MAX_OUTPUT_TOKENS = 3_000;
 
 export function backoffDelayMs(attempt: number, random: () => number = Math.random): number {
   const base = 500 * 2 ** Math.max(0, attempt - 1);
@@ -84,14 +87,12 @@ export function backoffDelayMs(attempt: number, random: () => number = Math.rand
   return Math.round(capped + random() * 250);
 }
 
-/** Tolerant JSON extraction: handles code fences and surrounding prose. */
+/** Parse JSON after removing an optional Markdown code fence. */
 export function extractJsonObject(text: string): unknown {
   if (typeof text !== 'string') return null;
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json|javascript)?/i, '')
-    .replace(/```$/, '')
-    .trim();
+  const trimmed = text.trim();
+  const fence = /^```(?:json|javascript)?\s*\r?([\s\S]*?)\r?```$/i.exec(trimmed);
+  const cleaned = (fence?.[1] ?? trimmed).trim();
 
   try {
     return JSON.parse(cleaned) as unknown;
@@ -99,14 +100,7 @@ export function extractJsonObject(text: string): unknown {
     // fall through
   }
 
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start === -1 || end <= start) return null;
-  try {
-    return JSON.parse(cleaned.slice(start, end + 1)) as unknown;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function mapFailure(code: QwenErrorCode, message: string, latencyMs: number, attempts: number, retryAfterSeconds: number | null): QwenFailure {
@@ -137,6 +131,7 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
     input,
     temperature: options.temperature,
     max_output_tokens: MAX_OUTPUT_TOKENS,
+    reasoning: { effort: 'low' },
   });
 
   const maxAttempts = Math.max(1, options.maxRetries + 1);
@@ -164,13 +159,9 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
     const latencyMs = (options.now ? options.now() : Date.now()) - started;
 
     if (!response.ok && response.status > 0) {
-      logger.warn('Qwen provider returned a non-2xx response', {
-        durationMs: response.elapsedMs,
-        status: response.status,
-        responseBody: sanitizeResponseBody(response.text),
-      });
+      logger.warn('Qwen provider returned a non-2xx response', { ...responseDiagnostics(response.status, response.json ?? parseResponse(response.text)) });
     } else if (response.failure === 'timeout') {
-      logger.warn('Qwen provider request timed out', { durationMs: response.elapsedMs, status: null });
+      logger.warn('Qwen provider request timed out', { status: null, incompleteReason: null, outputItemTypes: [], contentTypes: [], outputTextLength: 0 });
     }
 
     if (response.failure === 'timeout') {
@@ -187,15 +178,23 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
       lastFailure = mapFailure('upstream_error', `the model provider returned HTTP ${response.status}`, latencyMs, attempt, response.retryAfterSeconds);
     } else {
       const parsed = response.json ?? extractJsonObject(response.text ?? '');
-      if (!isCompletedResponse(parsed)) {
-        return mapFailure('invalid_payload', 'the model response was incomplete or malformed', latencyMs, attempt, null);
+      if (!isCompletedResponse(parsed)) logger.warn('Qwen response was not completed', responseDiagnostics(response.status, parsed));
+      if (isRecord(parsed) && parsed.status === 'incomplete' && isTokenLimitReason(parsed.incomplete_details)) {
+        return mapFailure('token_limit_reached', 'Qwen reached the output token limit before completing the report. Increase available output or shorten the research request.', latencyMs, attempt, null);
       }
+      if (!isCompletedResponse(parsed)) return mapFailure('invalid_payload', 'Qwen did not return a completed response.', latencyMs, attempt, null);
       const content = readContent(parsed);
       if (content === null) {
-        return mapFailure('invalid_payload', 'the model response did not contain a usable completion', latencyMs, attempt, null);
+        logger.warn('Qwen completed without output text', responseDiagnostics(response.status, parsed));
+        return mapFailure('missing_output_text', 'Qwen completed the response without returning output text.', latencyMs, attempt, null);
       }
       if (content.trim() === '') {
+        logger.warn('Qwen returned empty output text', responseDiagnostics(response.status, parsed));
         return mapFailure('empty_response', 'the model returned an empty completion', latencyMs, attempt, null);
+      }
+      if (extractJsonObject(content) === null) {
+        logger.warn('Qwen output text was not valid JSON', responseDiagnostics(response.status, parsed));
+        return mapFailure('invalid_json', 'Qwen returned output text that was not valid JSON.', latencyMs, attempt, null);
       }
       return {
         ok: true,
@@ -221,6 +220,7 @@ export async function requestJsonCompletion(messages: QwenMessage[], options: Qw
 
 function readContent(payload: unknown): string | null {
   if (!isRecord(payload)) return null;
+  if (typeof payload.output_text === 'string') return payload.output_text;
   if (!Array.isArray(payload.output)) return null;
   const text: string[] = [];
   for (const item of payload.output) {
@@ -230,6 +230,37 @@ function readContent(payload: unknown): string | null {
     }
   }
   return text.length > 0 ? text.join('') : null;
+}
+
+function parseResponse(text: string | null): unknown {
+  if (text === null) return null;
+  try { return JSON.parse(text) as unknown; } catch { return null; }
+}
+
+function responseDiagnostics(status: number, payload: unknown): Record<string, unknown> {
+  const outputItemTypes: string[] = [];
+  const contentTypes: string[] = [];
+  let outputTextLength = 0;
+  let incompleteReason: string | null = null;
+  if (isRecord(payload)) {
+    if (isRecord(payload.incomplete_details) && typeof payload.incomplete_details.reason === 'string') incompleteReason = payload.incomplete_details.reason;
+    if (Array.isArray(payload.output)) for (const item of payload.output) {
+      if (!isRecord(item)) continue;
+      if (typeof item.type === 'string') outputItemTypes.push(item.type);
+      if (!Array.isArray(item.content)) continue;
+      for (const part of item.content) if (isRecord(part)) {
+        if (typeof part.type === 'string') contentTypes.push(part.type);
+        if (part.type === 'output_text' && typeof part.text === 'string') outputTextLength += part.text.length;
+      }
+    }
+    if (typeof payload.output_text === 'string') outputTextLength = Math.max(outputTextLength, payload.output_text.length);
+  }
+  return { status, incompleteReason, outputItemTypes, contentTypes, outputTextLength };
+}
+
+function isTokenLimitReason(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.reason !== 'string') return false;
+  return ['max_output_tokens', 'max_tokens', 'token_limit'].includes(value.reason);
 }
 
 function readFinishReason(payload: unknown): string | null {
@@ -263,12 +294,4 @@ function safeHost(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-function sanitizeResponseBody(body: string | null): unknown {
-  if (body === null) return null;
-  const parsed = safeJsonParse(body);
-  const sanitized = redactSecrets(parsed ?? body);
-  const serialized = JSON.stringify(sanitized);
-  return serialized.length <= 4_000 ? sanitized : `${serialized.slice(0, 4_000)}…`;
 }
