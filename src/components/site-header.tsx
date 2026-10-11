@@ -4,12 +4,13 @@ import Link from 'next/link';
 import React, { useEffect, useRef, useState } from 'react';
 import { useDemoProfile } from '@/components/demo-profile-provider.tsx';
 
-export type SiteSection = 'workspace' | 'reports' | 'settings' | 'profile' | 'login' | 'signup';
+export type SiteSection = 'workspace' | 'reports' | 'settings' | 'stocks' | 'profile' | 'login' | 'signup';
 
 const baseNavigationItems: ReadonlyArray<{ label: string; href: string; section: SiteSection }> = [
   { label: 'Workspace', href: '/', section: 'workspace' },
   { label: 'Reports', href: '/reports', section: 'reports' },
   { label: 'Settings', href: '/settings', section: 'settings' },
+  { label: 'Stocks', href: '/stocks', section: 'stocks' },
 ];
 
 export function SiteHeader({ activeSection }: { activeSection: SiteSection }) {

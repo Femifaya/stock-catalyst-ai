@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import React from 'react';
 import { useState } from 'react';
 import type { SavedReport } from '@/lib/reports/store.ts';
 
-export function ReportView({ initialReport }: { initialReport: SavedReport }) {
+export function ReportView({ initialReport, modelLabel }: { initialReport: SavedReport; modelLabel?: string }) {
   const [saved, setSaved] = useState(initialReport);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -35,7 +36,7 @@ export function ReportView({ initialReport }: { initialReport: SavedReport }) {
     ['Fundamental quality', report.fundamentalQuality], ['Valuation context', report.valuationContext], ['News and macro', report.newsAndMacro],
   ] as const;
   return <article className="report-view">
-    <div className="report-toolbar"><div><span className="status">{saved.generationMode === 'demo-template' ? 'DEMO TEMPLATE · NOT AI OUTPUT' : 'QWEN AI'}</span><span className="status">{saved.acknowledgedAt ? 'ACKNOWLEDGED' : 'UNREVIEWED'}</span></div><div className="export-links"><a href={`/api/reports/${encodeURIComponent(saved.id)}?format=markdown`}>Download Markdown</a><a href={`/api/reports/${encodeURIComponent(saved.id)}?format=json`}>Download JSON</a></div></div>
+    <div className="report-toolbar"><div><span className="status">{saved.generationMode === 'demo-template' ? 'DEMO TEMPLATE · NOT AI OUTPUT' : `QWEN AI${modelLabel ? ` · ${modelLabel}` : ''}`}</span><span className="status">{saved.acknowledgedAt ? 'ACKNOWLEDGED' : 'UNREVIEWED'}</span></div><div className="export-links"><a href={`/api/reports/${encodeURIComponent(saved.id)}?format=markdown`}>Download Markdown</a><a href={`/api/reports/${encodeURIComponent(saved.id)}?format=json`}>Download JSON</a></div></div>
     <p className="muted">Created {new Date(saved.createdAt).toLocaleString()} · {saved.request.horizon.replaceAll('_', ' ')} · {saved.request.riskTolerance} risk</p>
     <div className="human-notice"><strong>Human decision required</strong><p>This report is research context, not a recommendation. You are responsible for all decisions.</p><p>{report.limitations[0]}</p></div>
     <section className="panel"><p className="eyebrow">EXECUTIVE SUMMARY</p><p>{report.executiveSummary}</p><strong className="status">{report.status.toUpperCase()} · CONFIDENCE {report.confidence.label.toUpperCase()} ({report.confidence.score.toFixed(2)})</strong><p>{report.confidence.explanation}</p></section>

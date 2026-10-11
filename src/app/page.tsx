@@ -1,11 +1,13 @@
 'use client';
 
+import React from 'react';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { SavedReport } from '@/lib/reports/store.ts';
 import { ReportView } from '@/components/report-view.tsx';
-import type { MarketSnapshot } from '@/lib/market/types.ts';
-import type { IndicatorSnapshot } from '@/lib/indicators/types.ts';
+import { isSnapshotResponse } from '@/lib/market/snapshot-response.ts';
+import type { SnapshotResponse } from '@/lib/market/snapshot-response.ts';
+import { normalizeSymbol } from '@/lib/market/symbols.ts';
 import { SiteHeader } from '@/components/site-header.tsx';
 import { useDemoProfile } from '@/components/demo-profile-provider.tsx';
 import { applyPreferenceDefault } from '@/lib/demo-profile.ts';
@@ -21,8 +23,6 @@ import {
 const horizonOptions = [
   ['days_to_2_weeks', 'Days to 2 weeks'], ['2_to_8_weeks', '2 to 8 weeks'], ['3_to_12_weeks', '3 to 12 weeks'], ['6_to_18_months', '6 to 18 months'],
 ] as const;
-
-type Snapshot = MarketSnapshot & { indicators: IndicatorSnapshot | null };
 
 const money = (value: number | null | undefined) => value == null ? 'n/a' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 const label = (status?: string) => (status ?? 'unavailable').toUpperCase();
@@ -40,19 +40,21 @@ export default function Home() {
   const [watchlistReady, setWatchlistReady] = useState(false);
   const [newWatchSymbol, setNewWatchSymbol] = useState('');
   const [watchlistMessage, setWatchlistMessage] = useState('');
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null);
   const [savedReport, setSavedReport] = useState<SavedReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [stage, setStage] = useState('');
 
   async function load(nextSymbol: string) {
-    setBusy(true); setError(''); setStage('Loading available market evidence…'); setSymbol(nextSymbol);
+    const normalized = normalizeSymbol(nextSymbol);
+    if (!normalized) { setError('Enter a valid US ticker symbol.'); setSnapshot(null); return; }
+    setBusy(true); setError(''); setStage('Loading available market evidence…'); setSymbol(normalized);
     try {
-      const response = await fetch(`/api/snapshot?symbol=${encodeURIComponent(nextSymbol)}`);
+      const response = await fetch(`/api/snapshot?symbol=${encodeURIComponent(normalized)}`);
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(readMessage(payload, 'Could not load this symbol.'));
-      if (!isSnapshot(payload)) throw new Error('The market snapshot response was invalid.');
+      if (!isSnapshotResponse(payload, normalized)) throw new Error('The market snapshot response was invalid.');
       setSnapshot(payload);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed.'); setSnapshot(null); }
     finally { setBusy(false); setStage(''); }
@@ -71,7 +73,13 @@ export default function Home() {
     finally { setBusy(false); setStage(''); }
   }
 
-  useEffect(() => { void load('NVDA'); }, []);
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('symbol');
+    if (requested === null) { void load('NVDA'); return; }
+    const normalized = normalizeSymbol(requested);
+    if (!normalized) { setError('The symbol in this link is invalid. Enter a valid US ticker symbol.'); return; }
+    void load(normalized);
+  }, []);
 
   useEffect(() => {
     if (!profileReady || !profile) return;
@@ -184,13 +192,4 @@ function isSavedReport(value: unknown): value is SavedReport {
     && 'evidence' in value && Array.isArray(value.evidence)
     && 'catalysts' in value && typeof value.catalysts === 'object' && value.catalysts !== null
     && 'warnings' in value && Array.isArray(value.warnings);
-}
-
-function isSnapshot(value: unknown): value is Snapshot {
-  if (typeof value !== 'object' || value === null) return false;
-  return 'symbol' in value && typeof value.symbol === 'string' && 'generatedAt' in value && typeof value.generatedAt === 'string'
-    && 'quote' in value && typeof value.quote === 'object' && value.quote !== null && 'data' in value.quote
-    && 'candles' in value && typeof value.candles === 'object' && value.candles !== null && 'data' in value.candles
-    && 'news' in value && typeof value.news === 'object' && value.news !== null && 'data' in value.news
-    && 'indicators' in value && (value.indicators === null || typeof value.indicators === 'object');
 }

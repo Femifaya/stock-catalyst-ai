@@ -26,7 +26,7 @@ afterEach(async () => {
   window.localStorage.clear();
 });
 
-async function renderHeader(activeSection: 'workspace' | 'reports' | 'settings'): Promise<HTMLElement> {
+async function renderHeader(activeSection: 'workspace' | 'reports' | 'settings' | 'stocks'): Promise<HTMLElement> {
   const container = document.createElement('div');
   document.body.append(container);
   activeRoot = createRoot(container);
@@ -69,10 +69,11 @@ describe('SiteHeader navigation drawer', () => {
     expect(menuButton.getAttribute('aria-expanded')).toBe('true');
     expect(buttonByLabel(container, 'Close navigation menu')).toBe(document.activeElement);
     const links = drawer?.querySelectorAll('a[href]');
-    expect(links).toHaveLength(5);
+    expect(links).toHaveLength(6);
     expect(linkByText(container, 'Workspace').getAttribute('href')).toBe('/');
     expect(linkByText(container, 'Reports').getAttribute('aria-current')).toBe('page');
     expect(linkByText(container, 'Settings').getAttribute('href')).toBe('/settings');
+    expect(linkByText(container, 'Stocks').getAttribute('href')).toBe('/stocks');
     expect(linkByText(container, 'Login').getAttribute('href')).toBe('/login');
     expect(linkByText(container, 'Create demo profile').getAttribute('href')).toBe('/signup');
   });
